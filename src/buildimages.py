@@ -6,26 +6,58 @@ import re
 import subprocess
 import sys
 
-# NB: we don't use docker-py because it doesn't support modern Dockerfiles
 
 order = (
     "base_image",
     "tractor",
-    #    "heasoft", # reenable heasoft once we have it packaged
+    # "heasoft",
 )
 
 
-class Base:
-    # this class only exists (instead of module-level functions) to make unit
-    # testing less painful; it is also used by "release.py"
+class TaskRunner:
+    """Base class for running system commands and logging
+
+    this class only exists (instead of module-level functions) to make unit
+    testing less painful; it is also used by "release.py"
+    """
     def __init__(self, logger):
+        """Create a new TaskRunner
+        
+        Parameters:
+        -----------
+        logger: logging.Logger
+            Logging object
+        
+        """
         self.logger = logger
 
     def out(self, msg, severity=logging.INFO):
+        """Log progress message
+        
+        Parameters
+        ----------
+        msg: str
+            Message to log
+        severity: int
+            Logging level: logging.INFO, DEBUG, ERROR etc.
+
+        """
         self.logger.log(severity, msg)
         sys.stdout.flush()
 
     def run(self, command, timeout, **runargs):
+        """Run system command {command}
+        
+        Parameters:
+        -----------
+        command: str
+            Command to pass to subprocess.run()
+        timout: int
+            Timeout in sec
+        **runargs:
+            to be passed to subprocess.run
+        
+        """
         self.out(f"Running {command} with timeout {timeout}")
         result = subprocess.run(
             command,
@@ -38,27 +70,54 @@ class Base:
         return result
 
 
-class Builder(Base):
+class Builder(TaskRunner):
+
     def build(
         self,
         repository,
-        path,
+        image_path,
         tag,
         build_args=None,
         build_pars=None,
     ):
+        """Build an image by called 'docker build'
+        
+        Parameters:
+        -----------
+        repository: str
+            repository name
+        image_path: str
+            path to the image folder (e.g. tractor or heasoft)
+        tag: str
+            a tag name for the image
+        build_args: list
+            A list of str arguments to be passed directly to 'docker build'. e.g.
+            'SOME_ENV=myvalue'
+        build_pars: str
+            Extra command line arguments to be passed to 'docker build'
+            e.g. '--no-cache --network=host'
+        
+        """
         extra_args = []
+    
         # cope with forks of the repository (see tractor/heasoft Dockerfiles) by
         # setting a build arg
         build_args = build_args or []
         default_tag = tag.rsplit(":", 1)[1]
-        if not any([x.startswith("REPOSITORY=") for x in build_args]):
-            build_args.append(f"REPOSITORY={repository}")
-        if not any([x.startswith("BASE_IMAGE_TAG=") for x in build_args]):
-            build_args.append(f"BASE_IMAGE_TAG={default_tag}")
-        if not any([x.startswith("IMAGE_TAG=") for x in build_args]):
-            build_args.append(f"IMAGE_TAG={default_tag}")
+        # Ensure we have: name=value
+        build_args = [arg.strip() for arg in build_args]
+        
+        # add passed parameters to build_args
+        mapping = {
+            'REPOSITORY': repository,
+            'BASE_IMAGE_TAG': default_tag,
+            'IMAGE_TAG': default_tag
+        }
+        for key,val in mapping.items():
+            if not any([arg.startswith(f'{key}=') for arg in build_args]):
+                build_args.append(f'{key}={val}')
 
+        # loop through the build_args and add them extra_args
         for arg in build_args:
             if not arg.count("=") == 1:
                 raise ValueError(
@@ -66,61 +125,84 @@ class Builder(Base):
                     f"Got '{arg}'."
                 )
             name, val = arg.split("=", 1)
-            nameandval = f"{name}={val}"
-            extra_args.append(f"--build-arg {nameandval}")
+            extra_args.append(f"--build-arg {name}={val}")
 
+        # now add any other line parameters
         if build_pars:
             extra_args.append(build_pars)
+
         extra_args = " ".join(extra_args)
-        buildcommand = f"docker build {extra_args} --tag {tag} {path}"
-        self.out(f"Building {path} via '{buildcommand}'")
+        buildcommand = f"docker build {extra_args} --tag {tag} {image_path}"
+        self.out(f"Building {image_path} via '{buildcommand}'")
         result = self.run(buildcommand, timeout=10000)
         self.out(result)
 
     def push(self, tag):
-        pushcommand = f"docker push {tag}"
-        self.out(f"Pushing {tag} via '{pushcommand}'")
-        result = self.run(pushcommand, timeout=1000)
+        """Push the image with 'docker push'
+        
+        Parameters:
+        -----------
+        tag: str
+            a tag name for the image
+
+        """
+        push_command = f"docker push {tag}"
+        self.out(f"Pushing {tag} via '{push_command}'")
+        result = self.run(push_command, timeout=1000)
         self.out(result)
 
-    def remove_lockfiles(self, path):
-        self.out(f"Removing the lock files for {path}")
-        lockfiles = glob.glob(f"{path}/conda-*lock.yml")
+    def remove_lockfiles(self, image_path):
+        """Remove conda lock files from image_path"""
+        self.out(f"Removing the lock files for {image_path}")
+        lockfiles = glob.glob(f"{image_path}/conda-*lock.yml")
         for lockfile in lockfiles:
-            self.out(f"Removing {path}/{lockfile}")
+            self.out(f"Removing {image_path}/{lockfile}")
             os.unlink(lockfile)
 
-    def update_lockfiles(self, path, repository, tag):
+    def update_lockfiles(self, image_path, repository, tag):
+        """Update the conda lock files for the image {image_path}
+        
+        Parameters
+        ----------
+        image_path: str
+            path to the image folder (e.g. tractor or heasoft)
+        repository: str
+            repository name
+        tag: str
+            a tag name for the image
+        """
         tag = tag.rsplit(":", 1)[1]
-        self.out(f"Updating the lock files for {path}")
-        envfiles = glob.glob(f"{path}/conda-*.yml")
+        self.out(f"Updating the lock files for {image_path}")
+        envfiles = glob.glob(f"{image_path}/conda-*.yml")
         envfiles = [
-            env for env in glob.glob(f"{path}/conda-*.yml") if "lock" not in env
+            env for env in glob.glob(f"{image_path}/conda-*.yml") if "lock" not in env
         ]
         for env in envfiles:
-            match = re.match(rf"{path}/conda-(.*).yml", env)
+            match = re.match(rf"{image_path}/conda-(.*).yml", env)
             if match:
                 env_name = match[1]
             else:
                 env_name = "base"
             cmd = (
                 f'docker run --entrypoint="" --rm '
-                f"ghcr.io/{repository}/{path}:{tag} "
+                f"ghcr.io/{repository}/{image_path}:{tag} "
                 f"mamba env export -n {env_name}"
             )
 
             result = self.run(cmd, 500, capture_output=True)
             lines = []
             include = False
+            # capture lines after: 'name:'
             for line in result.stdout.split("\n"):
                 if "name:" in line:
                     include = True
                 if include:
                     lines.append(line)
-            with open(f"{path}/conda-{env_name}-lock.yml", "w") as fp:
+            with open(f"{image_path}/conda-{env_name}-lock.yml", "w") as fp:
                 fp.write("\n".join(lines))
 
     def builds_necessary(self, repository, tag, images):
+        """Construct a list of images to be built"""
         tobuild = []
         for name in images:
             if not name in order:
@@ -182,7 +264,7 @@ def main(
             if update_lock:
                 builder.remove_lockfiles(dockerdir)
             builder.build(
-                repository, dockerdir, tag, build_args, build_pars=build_pars
+                repository, dockerdir, tag, build_args, build_pars
             )
         if update_lock:
             builder.update_lockfiles(dockerdir, repository, tag)

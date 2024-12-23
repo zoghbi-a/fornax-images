@@ -4,11 +4,12 @@ import json
 import subprocess
 
 from buildimages import order
-from buildimages import Base
+from buildimages import TaskRunner
 
 base_images = ('base_image',)
 
-class Needer(Base):
+class Needer(TaskRunner):
+    """Works out the images that needs to be build when the CI runs"""
     def needs(self, repository, gh_token, dirs_changed, branch):
         if isinstance(dirs_changed, str):
             dirs_changed = json.loads(dirs_changed)

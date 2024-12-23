@@ -1,11 +1,11 @@
 import argparse
 import logging
 
-from buildimages import Base
+from buildimages import TaskRunner
 from buildimages import order
 
 
-class Tagger(Base):
+class Tagger(TaskRunner):
     def tag(self, repository, release_name, source_tag, symbolic_tag):
         for name in order:
             source = f"ghcr.io/{repository}/{name}:{source_tag}"
