@@ -44,5 +44,5 @@ jobs:
         id: push
         run: |
            python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
-              --tag "${{ github.head_ref || github.ref_name }}" \
+              --tag "${{ github.base_ref || github.head_ref || github.ref_name }}" \
               --release "${{ github.event.release.tag_name }}"

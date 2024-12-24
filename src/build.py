@@ -323,6 +323,7 @@ if __name__ == '__main__':
     builder.out(f'repository: {repo}', logging.DEBUG)
     builder.out(f'tag: {tag}', logging.DEBUG)
     builder.out(f'push: {push}', logging.DEBUG)
+    builder.out(f'release: {release}', logging.DEBUG)
     builder.out(f'update_lock: {update_lock}', logging.DEBUG)
     builder.out(f'no_build: {no_build}', logging.DEBUG)
     builder.out(f'build_args: {build_args}', logging.DEBUG)
