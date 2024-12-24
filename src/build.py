@@ -1,6 +1,8 @@
 import logging
 import subprocess
 import sys
+import os
+import glob
 
 
 class Builder:
@@ -50,7 +52,7 @@ class Builder:
             to be passed to subprocess.run
         
         """
-        self.out(f"Running (timeout: {timeout}):\n{command}")
+        self.out(f"Running (timeout: {timeout})::\n{command}")
         result = None
         if not self.dryrun:
             result = subprocess.run(
@@ -121,6 +123,35 @@ class Builder:
         build_cmd = f"docker build {cmd_args} --tag {tag} {image}"
         self.out(f"Building {image} ...")
         result = self.run(build_cmd, timeout=10000)
+
+    def push(self, tag):
+        """Push the image with 'docker push'
+        
+        Parameters:
+        -----------
+        tag: str
+            a tag name for the image of the form: repo:tag
+
+        """
+        if not isinstance(tag, str) or ':' not in tag:
+            raise ValueError(f'tag: {tag} is not a str the form repo:tag')
+        push_command = f'docker push {tag}'
+        self.out(f"Pushing {tag} ...")
+        result = self.run(push_command, timeout=1000)
+
+    def remove_lockfiles(self, image):
+        """Remove conda lock files from image
+        
+        Parameters
+        ----------
+        image: str
+            name of the image folder containing Dockerfile and lockfiles if any.
+        """
+        self.out(f"Removing the lock files for {image}")
+        lockfiles = glob.glob(f"{image}/conda-*lock.yml")
+        for lockfile in lockfiles:
+            self.out(f"Removing {image}/{lockfile}")
+            os.unlink(lockfile)
 
 
 if __name__ == '__main__':

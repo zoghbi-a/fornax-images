@@ -3,6 +3,9 @@ from unittest.mock import patch
 import logging
 import sys
 import os
+import pathlib
+import tempfile
+import glob
 from io import StringIO
 
 
@@ -51,7 +54,7 @@ class TestTaskRunner(unittest.TestCase):
             output = mock_out.getvalue().strip()
         cmd = (f'docker build --build-arg REPOSITORY={self.repo} '
                f'--build-arg IMAGE_TAG={self.tag} --tag some-tag {self.image}')
-        self.assertEqual(cmd, output.split(':')[-1].strip())
+        self.assertEqual(cmd, output.split('::')[-1].strip())
         self.logger.handlers.clear()
     
     def test_build__build_args_is_list(self):
@@ -68,7 +71,7 @@ class TestTaskRunner(unittest.TestCase):
         cmd = (f'docker build --build-arg ENV=val --build-arg ENV2=val '
                f'--build-arg REPOSITORY={self.repo} '
                f'--build-arg IMAGE_TAG={self.tag} --tag some-tag {self.image}')
-        self.assertEqual(cmd, output.split(':')[-1].strip())
+        self.assertEqual(cmd, output.split('::')[-1].strip())
         self.logger.handlers.clear()
     
     def test_build__build_pars(self):
@@ -79,9 +82,41 @@ class TestTaskRunner(unittest.TestCase):
             output = mock_out.getvalue().strip()
         cmd = (f'docker build --build-arg REPOSITORY={self.repo} --build-arg '
                f'IMAGE_TAG={self.tag} --some-par --tag some-tag {self.image}')
-        self.assertEqual(cmd, output.split(':')[-1].strip())
+        self.assertEqual(cmd, output.split('::')[-1].strip())
+        self.logger.handlers.clear()
+
+    def test_build__push_not_str(self):
+        with self.assertRaises(ValueError):
+            self.builder_dry.push(123)
         self.logger.handlers.clear()
     
+    def test_build__push_wrong_format(self):
+        with self.assertRaises(ValueError):
+            self.builder_dry.push(self.tag)
+        self.logger.handlers.clear()
+    
+    def test_build__push(self):
+        with patch('sys.stderr', new=StringIO()) as mock_out:
+            logging.basicConfig(level=logging.DEBUG)
+            self.builder_dry.push(f'{self.repo}:{self.tag}')
+            output = mock_out.getvalue().strip()
+        print(output)
+        cmd = (f'docker push {self.repo}:{self.tag}')
+        self.assertEqual(cmd, output.split('::')[-1].strip())
+        self.logger.handlers.clear()
+
+    def test_remove_lockfiles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            files = ["conda-lock.yml", "conda-notebook-lock.yml", "conda-a.yml"]
+            for fn in files:
+                fn = os.path.join(tmpdir, fn)
+                pathlib.Path(fn).touch()
+            self.builder_run.remove_lockfiles(tmpdir)
+            self.assertEqual(glob.glob(f'{tmpdir}/conda-*lock.yml'), [])
+            self.assertEqual(
+                glob.glob(f"{tmpdir}/conda-*"),
+                [os.path.join(tmpdir, "conda-a.yml")],
+            )
 
 if __name__ == "__main__":
     unittest.main()
