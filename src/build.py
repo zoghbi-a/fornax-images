@@ -4,7 +4,13 @@ import sys
 import os
 import glob
 import re
+import argparse
 
+IMAGE_ORDER = (
+    'base_image',
+    'tractor',
+    'heasoft'
+)
 
 class Builder:
     """Base class for running system commands and logging
@@ -53,7 +59,7 @@ class Builder:
             to be passed to subprocess.run
         
         """
-        self.out(f"Running (timeout: {timeout})::\n{command}")
+        self.out(f"Running ::\n{command}")
         result = None
         if not self.dryrun:
             result = subprocess.run(
@@ -66,7 +72,7 @@ class Builder:
             )
         return result
     
-    def build( self, repo, image, tag, build_args=None, extra_args=None):
+    def build(self, repo, image, tag, build_args=None, extra_args=None):
         """Build an image by called 'docker build'
         
         Parameters:
@@ -91,6 +97,7 @@ class Builder:
         build_args = build_args or []
         if not isinstance(build_args, list):
             raise ValueError(f'build_args is of type {type(build_args)}. Expected a list.')
+        full_tag = tag
         if ':' in tag:
             tag = tag.rsplit(':', 1)[1]
         
@@ -121,7 +128,7 @@ class Builder:
             cmd_args.append(extra_args)
 
         cmd_args = " ".join(cmd_args)
-        build_cmd = f"docker build {cmd_args} --tag {tag} {image}"
+        build_cmd = f"docker build {cmd_args} --tag {full_tag} {image}"
         self.out(f"Building {image} ...")
         result = self.run(build_cmd, timeout=10000)
 
@@ -169,7 +176,6 @@ class Builder:
         """
         if not isinstance(tag, str) or ':' not in tag:
             raise ValueError(f'tag: {tag} is not a str the form repo:tag')
-        tag = tag.rsplit(":", 1)[1]
 
         extra_args = extra_args or ''
         if not isinstance(extra_args, str):
@@ -181,23 +187,125 @@ class Builder:
         for env in envfiles:
             match = re.match(rf"{image}/conda-(.*).yml", env)
             env_name = match[1] if match else 'base'
-            cmd = (f'docker run --entrypoint="" --rm {extra_args} {tag}'
+            cmd = (f'docker run --entrypoint="" --rm {extra_args} {tag} '
                    f'mamba env export -n {env_name}')
             result = self.run(cmd, 500, capture_output=True)
-            # capture lines after: 'name:'
-            lines = []
-            include = False
-            for line in result.stdout.split("\n"):
-                if "name:" in line:
-                    include = True
-                if include:
-                    lines.append(line)
-            with open(f"{image}/conda-{env_name}-lock.yml", "w") as fp:
-                fp.write("\n".join(lines))
+            if result is not None: # dryrun=True
+                # capture lines after: 'name:'
+                lines = []
+                include = False
+                for line in result.stdout.split('\n'):
+                    if "name:" in line:
+                        include = True
+                    if include:
+                        lines.append(line)
+                with open(f"{image}/conda-{env_name}-lock.yml", "w") as fp:
+                    fp.write("\n".join(lines))
 
 if __name__ == '__main__':
     
+    ap = argparse.ArgumentParser()
+
+    ap.add_argument('images', nargs='*',
+        help="Image names to build separated by spaces e.g. 'base_image tractor'")
+
+    ap.add_argument('--tag',
+        help="Container registry tag name (e.g. 'mybranch'). Default is current git branch")
+
+    ap.add_argument('--repository',
+        help="GH repository name (e.g. 'fornax-core/images')",
+        default='fornax-images')
+
+    ap.add_argument('--push', action='store_true',
+        help='After building, push to container registry',
+        default=False)
+    
+    ap.add_argument('--no-build', action='store_true',
+        help="Do not run 'docker build' command",
+        default=False)
+
+    ap.add_argument('--update-lock', action='store_true',
+        help='Update conda lock files.',
+        default=False)
+
+    ap.add_argument('--dryrun', action='store_true',
+        help='prepare but do not run commands',
+        default=False)
+
+    ap.add_argument('--build-args', nargs='*',
+        help="Extra --build-arg arguments passed to docker build e.g. 'a=b c=d'")
+
+    ap.add_argument('--extra-pars',
+        help="Arguments to be passed directly to `docker build` or `docker run`",
+        default=None)
+    
+    ap.add_argument('--debug', action='store_true',
+        help='Print debug messages',
+        default=False)
+
+    args = ap.parse_args()
+    
+    # get parameters
+    dryrun = args.dryrun
+    debug = args.debug
+    images = args.images
+    repo = args.repository
+    tag = args.tag
+    push = args.push
+    update_lock = args.update_lock
+    no_build = args.no_build
+    build_args = args.build_args
+    extra_pars = args.extra_pars
+
+    os.environ["DOCKER_BUILDKIT"] = "1"
+    logging.basicConfig(
+        format="%(asctime)s|%(levelname)5s| %(message)s",
+        datefmt="%Y-%m-%d|%H:%M:%S",
+    )
     logger = logging.getLogger('::Builder::')
-    logging.basicConfig(level=logging.DEBUG)
-    builder = Builder(logger, dryrun=True)
-    builder.build('fornax-images', 'tractor', 'some-tag')
+    logger.setLevel(level=logging.DEBUG if debug else logging.INFO)
+    builder = Builder(logger, dryrun=dryrun)
+
+    # get current branch name as default tag
+    if tag is None:
+        out = builder.run('git branch --show-current', timeout=100, capture_output=True)
+        if out is not None:
+            tag = out.stdout.strip()
+        tag = 'no-tag' if out is None else out.stdout.strip()
+    
+    # some logging:
+    builder.out('Builder initialized ..', logging.DEBUG)
+    builder.out('+++ INPUT +++', logging.DEBUG)
+    builder.out(f'images: {images}', logging.DEBUG)
+    builder.out(f'repository: {repo}', logging.DEBUG)
+    builder.out(f'tag: {tag}', logging.DEBUG)
+    builder.out(f'push: {push}', logging.DEBUG)
+    builder.out(f'update_lock: {update_lock}', logging.DEBUG)
+    builder.out(f'no_build: {no_build}', logging.DEBUG)
+    builder.out(f'build_args: {build_args}', logging.DEBUG)
+    builder.out(f'extra_pars: {extra_pars}', logging.DEBUG)
+    builder.out('+++++++++++++', logging.DEBUG)
+
+    # get a sorted list of images to build
+    to_build = []
+    for image in IMAGE_ORDER:
+        if image in images:
+            to_build.append(image)
+
+    builder.out(f'Images to build: {to_build}', logging.DEBUG)
+    for image in to_build:
+        builder.out(f'Working on: {image}', logging.DEBUG)
+
+        full_tag = f'ghcr.io/{repo}/{image}:{tag}'
+        
+        if update_lock:
+            builder.remove_lockfiles(image)
+        
+        if not no_build:
+            builder.build(repo, image, full_tag, build_args, extra_pars)
+        
+        if update_lock:
+            builder.update_lockfiles(image, full_tag)
+
+        if push:
+            builder.push(full_tag)
