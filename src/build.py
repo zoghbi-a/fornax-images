@@ -10,7 +10,7 @@ import json
 IMAGE_ORDER = (
     'base_image',
     'tractor',
-    'heasoft'
+    #'heasoft'
 )
 
 class Builder:
@@ -147,6 +147,40 @@ class Builder:
         push_command = f'docker push {tag}'
         self.out(f"Pushing {tag} ...")
         result = self.run(push_command, timeout=1000)
+    
+    def release(self, repo, source_tag, release_tag):
+        """Push the image with 'docker push'
+        
+        Parameters:
+        -----------
+        repo: str
+            repo name
+        source_tag: str
+            The tag name for the image (no repo name)
+        release_tag: str
+            The target tag name for the release (no repo name)
+
+        """
+        if not isinstance(source_tag, str) or ':' in source_tag:
+            raise ValueError(f'source_tag: {source_tag} is expected to be a str with no repo')
+        if not isinstance(release_tag, str) or ':' in release_tag:
+            raise ValueError(f'release_tag: {release_tag} is expected to be a str with no repo')
+        # Loop through the images
+        for image in IMAGE_ORDER:
+            sourcetag = f'ghcr.io/{repo}/{image}:{source_tag}'
+            releasetag = f'ghcr.io/{repo}/{image}:{release_tag}'
+            # pull
+            command = f'docker pull {sourcetag}'
+            self.out(f"Pulling {sourcetag} ...")
+            self.run(command, timeout=1000)
+            # tag
+            command = f'docker tag {sourcetag} {releasetag}'
+            self.out(f"Tagging {sourcetag} with {releasetag} ...")
+            self.run(command, timeout=1000)
+            # pull
+            command = f'docker push {releasetag}'
+            self.out(f"Pushing {releasetag} ...")
+            self.run(command, timeout=1000)
 
     def remove_lockfiles(self, image):
         """Remove conda lock files from image
@@ -221,6 +255,9 @@ if __name__ == '__main__':
         help='After building, push to container registry',
         default=False)
     
+    ap.add_argument('--release', nargs=1,
+        help='Release using the given tag')
+    
     ap.add_argument('--no-build', action='store_true',
         help="Do not run 'docker build' command",
         default=False)
@@ -253,6 +290,7 @@ if __name__ == '__main__':
     repo = args.repository
     tag = args.tag
     push = args.push
+    release = args.release
     update_lock = args.update_lock
     no_build = args.no_build
     build_args = args.build_args
@@ -272,7 +310,7 @@ if __name__ == '__main__':
     builder = Builder(logger, dryrun=dryrun)
 
     # get current branch name as default tag
-    if tag is None:
+    if (len(images) or release is not None) and tag is None:
         out = builder.run('git branch --show-current', timeout=100, capture_output=True)
         if out is not None:
             tag = out.stdout.strip()
@@ -314,3 +352,7 @@ if __name__ == '__main__':
 
         if push:
             builder.push(full_tag)
+        
+    if release is not None:
+        release = release[0]
+        builder.release(repo, tag, release)

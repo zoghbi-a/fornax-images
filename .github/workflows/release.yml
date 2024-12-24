@@ -43,4 +43,6 @@ jobs:
       - name: Tag main images with release tags
         id: push
         run: |
-           python src/release.py "${{ github.repository }}" "${{ github.event.release.tag_name }}"  
+           python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
+              --tag "${{ github.head_ref || github.ref_name }}" \
+              --release "${{ github.event.release.tag_name }}"
