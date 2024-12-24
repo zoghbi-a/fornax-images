@@ -1,4 +1,4 @@
-name: Run buildimages tests
+name: Run tests for the build code in src/
 
 on:
   push:
@@ -7,13 +7,10 @@ on:
     paths: ['src/**']
 
 jobs:
-
   run-tests:
-
     runs-on: ubuntu-latest
-
     steps:
-
+      
       - name: Checkout repository
         uses: actions/checkout@v4
         
