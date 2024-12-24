@@ -3,6 +3,7 @@ import subprocess
 import sys
 import os
 import glob
+import re
 
 
 class Builder:
@@ -65,7 +66,7 @@ class Builder:
             )
         return result
     
-    def build( self, repo, image, tag, build_args=None, build_pars=None):
+    def build( self, repo, image, tag, build_args=None, extra_args=None):
         """Build an image by called 'docker build'
         
         Parameters:
@@ -79,7 +80,7 @@ class Builder:
         build_args: list
             A list of str arguments to be passed directly to 'docker build'. e.g.
             'SOME_ENV=myvalue'
-        build_pars: str
+        extra_args: str
             Extra command line arguments to be passed to 'docker build'
             e.g. '--no-cache --network=host'
         
@@ -116,8 +117,8 @@ class Builder:
             cmd_args.append(f"--build-arg {name}={val}")
 
         # now add any other line parameters
-        if build_pars:
-            cmd_args.append(build_pars)
+        if extra_args:
+            cmd_args.append(extra_args)
 
         cmd_args = " ".join(cmd_args)
         build_cmd = f"docker build {cmd_args} --tag {tag} {image}"
@@ -153,6 +154,46 @@ class Builder:
             self.out(f"Removing {image}/{lockfile}")
             os.unlink(lockfile)
 
+    def update_lockfiles(self, image, tag, extra_args=None):
+        """Update the conda lock files in {image} using image {tag}
+        
+        Parameters
+        ----------
+        image: str
+            path to the image folder (e.g. tractor or heasoft)
+        tag: str
+            a tag name for the image of the form: repo:tag
+        extra_args: str
+            Extra command line arguments to be passed to 'docker run'
+            e.g. '--network=host'
+        """
+        if not isinstance(tag, str) or ':' not in tag:
+            raise ValueError(f'tag: {tag} is not a str the form repo:tag')
+        tag = tag.rsplit(":", 1)[1]
+
+        extra_args = extra_args or ''
+        if not isinstance(extra_args, str):
+            raise ValueError(f'Expected str for extra_args; got: {extra_args}')
+
+        self.out(f'Updating the lock files for {image}')
+        envfiles = [env for env in glob.glob(f'{image}/conda-*.yml')
+                    if 'lock' not in env]
+        for env in envfiles:
+            match = re.match(rf"{image}/conda-(.*).yml", env)
+            env_name = match[1] if match else 'base'
+            cmd = (f'docker run --entrypoint="" --rm {extra_args} {tag}'
+                   f'mamba env export -n {env_name}')
+            result = self.run(cmd, 500, capture_output=True)
+            # capture lines after: 'name:'
+            lines = []
+            include = False
+            for line in result.stdout.split("\n"):
+                if "name:" in line:
+                    include = True
+                if include:
+                    lines.append(line)
+            with open(f"{image}/conda-{env_name}-lock.yml", "w") as fp:
+                fp.write("\n".join(lines))
 
 if __name__ == '__main__':
     

@@ -74,11 +74,11 @@ class TestTaskRunner(unittest.TestCase):
         self.assertEqual(cmd, output.split('::')[-1].strip())
         self.logger.handlers.clear()
     
-    def test_build__build_pars(self):
+    def test_build__extra_args(self):
         with patch('sys.stderr', new=StringIO()) as mock_out:
             logging.basicConfig(level=logging.DEBUG)
             self.builder_dry.build(self.repo, self.image, self.tag,
-                                    build_pars='--some-par')
+                                    extra_args='--some-par')
             output = mock_out.getvalue().strip()
         cmd = (f'docker build --build-arg REPOSITORY={self.repo} --build-arg '
                f'IMAGE_TAG={self.tag} --some-par --tag some-tag {self.image}')
@@ -117,6 +117,35 @@ class TestTaskRunner(unittest.TestCase):
                 glob.glob(f"{tmpdir}/conda-*"),
                 [os.path.join(tmpdir, "conda-a.yml")],
             )
+    
+    def test_update_lockfiles(self):
+        # dummy builder to write to stdout
+        class DummyResult:
+            stdout = "woo\nyoo\nname:\nnextline"
+        ran = []
+        def run(cmd, timeout, **kw):
+            ran.append((cmd, timeout))
+            return DummyResult
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            files = [
+                "conda-notebook-lock.yml",
+                "conda-a.yml",
+                "conda-a-lock.yml",
+            ]
+            for fn in files:
+                fn = os.path.join(tmpdir, fn)
+                pathlib.Path(fn).touch()
+            _run = self.builder_dry.run
+            self.builder_dry.run = run
+            self.builder_dry.update_lockfiles(tmpdir, 'main:tag')
+            self.builder_dry.run = _run
+            with open(os.path.join(tmpdir, "conda-a-lock.yml"), "r") as f:
+                result = f.read()
+            nowfiles = os.listdir(tmpdir)
+            self.assertEqual(len(nowfiles), 3)
+            self.assertEqual(result, "name:\nnextline")
+        self.logger.handlers.clear()
 
 if __name__ == "__main__":
     unittest.main()
