@@ -43,6 +43,7 @@ jobs:
       - name: Tag main images with release tags
         id: push
         run: |
-           python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
-              --tag "${{ github.base_ref || github.head_ref || github.ref_name }}" \
-              --release "${{ github.event.release.tag_name }}"
+          TAG_NAME=${{ github.event.release.tag_name }}
+          BRANCH_NAME=$(git branch -r --contains "tags/$TAG_NAME" | grep -v '\->' | head -n 1 | sed 's/origin\///')
+          python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
+              --tag "$BRANCH_NAME" --release "$TAG_NAME"
