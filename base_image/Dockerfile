@@ -6,6 +6,7 @@ ARG IMAGE_TAG=latest
 LABEL gov.nasa.smce.fornax.jupyterhub.image="${IMAGE_TAG}"
 LABEL org.opencontainers.image.source=https://github.com/fornax-navo/fornax-images
 LABEL org.opencontainers.image.ref.name="Fornax Base Image"
+LABEL org.opencontainers.image.description "Fornax Astronomy Base Image"
 LABEL org.opencontainers.image.version=0.2
 LABEL maintainer="Fornax Project"
 

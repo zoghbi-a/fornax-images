@@ -5,6 +5,7 @@ import os
 import glob
 import re
 import argparse
+import json
 
 IMAGE_ORDER = (
     'base_image',
@@ -256,6 +257,10 @@ if __name__ == '__main__':
     no_build = args.no_build
     build_args = args.build_args
     extra_pars = args.extra_pars
+
+    # in case images is of the form: '["dir_1", "dir_2"]'
+    if len(images) == 1 and '[' in images[0]:
+        images = json.loads(images[0])
 
     os.environ["DOCKER_BUILDKIT"] = "1"
     logging.basicConfig(
