@@ -60,12 +60,6 @@ jobs:
           DIR_CHANGES: ${{ steps.directory-changes.outputs.changed }}
         run: |
            echo "DIR_CHANGES: $DIR_CHANGES"
-           #export GHCR_TOKEN=$(echo ${{ secrets.GITHUB_TOKEN }} | base64)
-           #export NEEDED="$(python src/neededimages.py "${{ github.repository }}" "$GHCR_TOKEN" "$DIR_CHANGES" "${{ github.head_ref || github.ref_name }}")"
-           #echo "$NEEDED"
-           #if [ ! -z "$NEEDED" ]; then
-           #  python src/buildimages.py "${{ github.repository }}" "${{ github.head_ref || github.ref_name }}" --push --images $NEEDED
-           #fi
-           python src/build.py --debug --repository "${{ github.repository }}" \
+           python scripts/build.py --debug --repository "${{ github.repository }}" \
               --tag "${{ github.head_ref || github.ref_name }}" \
               --push $DIR_CHANGES

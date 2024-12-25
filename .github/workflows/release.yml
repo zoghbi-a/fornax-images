@@ -10,7 +10,6 @@ env:
 jobs:
 
   build-and-push-images:
-
     runs-on: ubuntu-latest
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in
@@ -48,7 +47,7 @@ jobs:
       - name: Tag main images with release tags
         id: push
         run: |
-          python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
+          python scripts/build.py --debug --no-build  --repository "${{ github.repository }}" \
               --tag "${{ github.event.release.target_commitish }}" --release "${{ github.event.release.tag_name }}"
-          python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
+          python scripts/build.py --debug --no-build  --repository "${{ github.repository }}" \
               --tag "${{ github.event.release.target_commitish }}" --release stable
