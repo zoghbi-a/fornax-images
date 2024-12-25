@@ -13,7 +13,7 @@ sys.path.insert(0, os.getcwd())
 from build import Builder
 
 
-class TestTaskRunner(unittest.TestCase):
+class TestBuilder(unittest.TestCase):
 
     def setUp(self):
         logger = logging.getLogger()
@@ -100,9 +100,27 @@ class TestTaskRunner(unittest.TestCase):
             logging.basicConfig(level=logging.DEBUG)
             self.builder_dry.push(f'{self.repo}:{self.tag}')
             output = mock_out.getvalue().strip()
-        print(output)
         cmd = (f'docker push {self.repo}:{self.tag}')
         self.assertEqual(cmd, output.split('::')[-1].strip())
+        self.logger.handlers.clear()
+    
+    def test_build__release_wrong_tag(self):
+        with self.assertRaises(ValueError):
+            self.builder_dry.release('repo', 'in:tag', 'out')
+        with self.assertRaises(ValueError):
+            self.builder_dry.release('repo', 'in', 'out:tag')
+        self.logger.handlers.clear()
+    
+    def test_build__release(self):
+        with patch('sys.stderr', new=StringIO()) as mock_out:
+            logging.basicConfig(level=logging.DEBUG)
+            self.builder_dry.release(f'{self.repo}', f'{self.tag}', f'{self.tag}-out')
+            output = mock_out.getvalue().strip()
+        cmd = (f'docker push {self.repo}:{self.tag}')
+        self.assertTrue(f'docker pull ghcr.io/{self.repo}/base_image:{self.tag}' in output)
+        self.assertTrue((f'docker tag ghcr.io/{self.repo}/base_image:{self.tag} '
+                         f'ghcr.io/{self.repo}/base_image:{self.tag}-out') in output)
+        self.assertTrue(f'docker push ghcr.io/{self.repo}/base_image:{self.tag}-out' in output)
         self.logger.handlers.clear()
 
     def test_remove_lockfiles(self):
