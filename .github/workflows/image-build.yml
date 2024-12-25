@@ -1,6 +1,9 @@
 name: Build and push images as needed
 
-on: [ push ]
+on:
+  push:
+    branches-ignore:
+    - 'releases/**'
 env:
   REGISTRY: ghcr.io
 
