@@ -48,8 +48,5 @@ jobs:
       - name: Tag main images with release tags
         id: push
         run: |
-          TAG_NAME=${{ github.event.release.tag_name }}
-          echo `it branch -r --contains $TAG_NAME`
-          BRANCH_NAME=$(git branch -r --contains "tags/$TAG_NAME" | grep -v '\->' | head -n 1 | sed 's/origin\///')
           python src/build.py --debug --no-build  --repository "${{ github.repository }}" \
-              --tag "$BRANCH_NAME" --release "$TAG_NAME"
+              --tag "${{ github.event.release.target_commitish }}" --release "${{ github.event.release.tag_name }}"
