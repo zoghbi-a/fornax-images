@@ -2,8 +2,7 @@ name: Run tests for the build code in src/
 
 on:
   push:
-    paths: ['src/**']
-  pull_request:
+    branches-ignore: ['releases/**']
     paths: ['src/**']
 
 jobs:
