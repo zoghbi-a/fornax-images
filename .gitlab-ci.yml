@@ -1,0 +1,213 @@
+variables:
+  ECR_REGISTRY: public.ecr.aws/f6e2z3b0/fornax-images
+
+stages:
+  - prepare
+  - build_and_push
+
+
+## Prepare stage - This stage will prepare the list of directories that need
+## to be processed as part of the build_and_push stage, also it will check
+## if README.md is present in all directories that were modified/added.
+
+prepare_diff:
+  stage: prepare
+  image:
+    name: alpine/git:2.43.0
+    entrypoint:
+      - '/usr/bin/env'
+      - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  script:
+    - apk add --no-cache bash
+    - mkdir -p artifacts
+    - touch artifacts/dirs.txt
+    - |
+      # Work out the branch we are comparing against
+      echo "Do we have a MR or just a branch: CI_MERGE_REQUEST_ID: $CI_MERGE_REQUEST_ID"
+      if [ -z "$CI_MERGE_REQUEST_ID" ]; then
+        echo "CI_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA"
+        DIFF_TARGET=$CI_COMMIT_BEFORE_SHA
+        # if it does not exists (e.g. due to force commit
+        # use first commit before branch diverge)
+        if ! git cat-file -e $DIFF_TARGET; then
+          echo "Comparing to develop"
+          git fetch origin develop
+          DIFF_TARGET=$(git merge-base HEAD origin/develop)
+        fi
+      else
+        echo "We have a merge request; comparing to origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        git fetch origin $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+        DIFF_TARGET="origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      fi
+      # print diff for debugging
+      echo "Printing the diff ..."
+      echo "DIFF_TARGET: $DIFF_TARGET"
+      echo "CI_COMMIT_SHA: $CI_COMMIT_SHA"
+      git diff --name-only $DIFF_TARGET $CI_COMMIT_SHA
+
+      # Check for changes in Dockerfiles and other files except README.md.
+      # Only do first level folders (e.g. ./heasoft/), not sub-folders (./heasoft/some_folder/)
+      for dir in $(find . -maxdepth 1 -mindepth 1 -type d); do
+        if git diff --name-only $DIFF_TARGET $CI_COMMIT_SHA | grep -E "^(\./)?${dir#./}/([^/]*[^README\.md])$"; then
+          echo "$(basename $dir)" >> artifacts/dirs.txt
+        fi    
+      done
+    - |
+      # Print the content of artifacts/dirs.txt; i.e the image folders that will be built
+      echo "------------------"
+      echo "Generated artifacts/dirs.txt ..."
+      cat artifacts/dirs.txt
+      echo "------------------"
+    - |
+      # To imporve reproducibility, ensure that all images that go to production
+      # (i.e. commited to the main branch), have a well defined FROM image that is tagged by date.
+      if [ "$CI_COMMIT_REF_NAME" == "main" ]; then
+        for dir in $dirs; do
+          echo "Checking dir: $dir"
+          if [ "$dir" = "." ]; then
+            echo "Skipping root directory"
+            continue
+          fi
+
+          # exclude base_image from this tag check because it starts from a public
+          # jupyter stack image that we do not control.
+          if [ "$dir" = "base_image" ]; then
+            echo "Base image does not require source tag check. Skipping."
+            continue
+          fi
+
+          # Extract the FROM image tag from the Dockerfile
+          from_line=$(grep -E "^FROM " "$dir/Dockerfile")
+          if [ -z "$from_line" ]; then
+            echo "No FROM statement found in $dir/Dockerfile. Skipping."
+            continue
+          fi
+
+          # Extract the tag: get the part after the colon (:) and then split by hyphen (-)
+          image_with_tag=$(echo "$from_line" | awk '{print $2}')
+          image_tag=$(echo "$image_with_tag" | cut -d':' -f2 | awk -F'-' '{print $NF}')
+          # this matches date for the form: date +"%y.%m%d.%H%M" used in tagging the images below
+          if echo "$image_tag" | grep -Eq '^[0-9]{2}\.[0-1][0-9][0-3][0-9]\.[0-2][0-9][0-5][0-9]$'; then
+            echo "Tag in $dir is OK: $image_tag"
+          else
+            echo "ERROR in $dir: Source tag in main should specified as a date tag, not: stable, develop or latest."
+            exit 1
+          fi
+        done
+      else
+        echo "Not in main; skipping tag check"
+      fi
+  artifacts:
+    paths:
+      - artifacts/dirs.txt
+  rules:
+    # Do not run when we have a merge-request to main because we are retagging develop
+    - if: |
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop"
+      when: never
+    - when: always
+  tags:
+    - fornax-images-runners
+
+## Build and push stage - This stage will build and push the Docker images
+## to ECR.
+build_and_push:
+  stage: build_and_push
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  needs:
+  - prepare_diff
+  script:
+    - |
+      # Check if dirs.txt exists and has content; if not, exit gracefully
+      if [ ! -s artifacts/dirs.txt ]; then
+        echo "No changes that require rebuilding the images. Exiting..."
+        exit 0
+      fi
+
+      # Get the list of directories to build
+      dirs=$(cat artifacts/dirs.txt)
+      echo "List of directories to build: $dirs"
+
+      # Sort directories to ensure base_image is built first if it exists,
+      # becasue other images depend on it.
+      if [ $(echo $dirs | wc -w) -ne 1 ] && echo "$dirs" | grep -q "base_image"; then
+        dirs="base_image $(echo "$dirs" | grep -v "base_image")"
+        echo "Sorted List of directories to build: $dirs"
+      fi
+      
+      echo "{\"credsStore\":\"ecr-login\"}" > /kaniko/.docker/config.json
+
+      for dir in $dirs; do
+        echo "Checking dir: $dir"
+        if [ "$dir" = "." ]; then
+          echo "Skipping root directory"
+          continue
+        fi
+
+        if [ -f "$dir/Dockerfile" ]; then
+          echo "Found $dir/Dockerfile ..."
+        else
+          echo "$dir/Dockerfile not found, skipping $dir ..."
+          continue
+        fi
+
+        # Processing dir
+        echo "Processing $dir"
+        echo "CI_PROJECT_DIR = $CI_PROJECT_DIR"
+        echo "CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME"
+        echo "Look for $CI_PROJECT_DIR/$dir/Dockerfile" 
+
+        if [ $CI_COMMIT_REF_NAME == "main" ]; then
+           TAG="stable"
+        elif [ $CI_COMMIT_REF_NAME == "develop" ]; then
+           TAG="develop"
+        else
+          TAG="latest"
+        fi
+        echo "Building and pushing Docker image for $dir"
+              
+        DATESTR=`date +"%y.%m%d.%H%M"`
+        export IMAGE_TAG=${dir##*/}-${DATESTR}
+        echo "Using IMAGE_TAG: $IMAGE_TAG"
+        if [ $CI_COMMIT_REF_NAME == "main" ]; then
+          # For "main", we pull the last develop image that has been tested, 
+          # and push it as stable. This ensures that the *extract* image tested
+          # in development is pushed to production, not a re-built version.
+          # This avoids the build grabbing updated version of the packages in the image.
+          # Because /kaniko/executor does not support retagging, the following creates
+          # a Dockerfile on the fly (using stdin) to pull the develop image from the ERC, and then
+          # push it back with the 'stable' tag.
+          COMMAND="echo \"FROM $ECR_REGISTRY:$dir-develop\" | \
+          /kaniko/executor --dockerfile /dev/stdin \
+          --destination=$ECR_REGISTRY:$IMAGE_TAG"
+        else
+          # For other commits, we do a normal build
+          COMMAND="/kaniko/executor --context $CI_PROJECT_DIR/$dir    \
+            --dockerfile $CI_PROJECT_DIR/$dir/Dockerfile            \
+            --cache=false --use-new-run --cleanup                   \
+            --build-arg SMCE_SERVICES_GITHUB_TOKEN=${SMCE_SERVICES_GITHUB_TOKEN} \
+            --build-arg IMAGE_TAG=${TAG} \
+            --destination=$ECR_REGISTRY:$IMAGE_TAG"
+        fi
+        echo "Inital COMMAND: $COMMAND"
+      
+        # Always push a image, with the tag: stable, develop or latest
+        COMMAND="$COMMAND --destination=$ECR_REGISTRY:$dir-$TAG"
+        echo "Updated COMMAND: $COMMAND"
+      
+        echo "Executing command: ${COMMAND}"
+        eval $COMMAND
+        
+      done
+  rules:
+    # Do not run when we have a merge-request to main because we are retagging develop
+    - if: |
+        $CI_PIPELINE_SOURCE == "merge_request_event" &&
+        $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop"
+      when: never
+    - when: always
+  tags:
+    - fornax-images-runners
