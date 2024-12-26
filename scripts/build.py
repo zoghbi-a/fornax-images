@@ -148,7 +148,7 @@ class Builder:
         self.out(f"Pushing {tag} ...")
         result = self.run(push_command, timeout=1000)
     
-    def release(self, repo, source_tag, release_tag):
+    def release(self, repo, source_tag, release_tags):
         """Push the image with 'docker push'
         
         Parameters:
@@ -157,30 +157,34 @@ class Builder:
             repo name
         source_tag: str
             The tag name for the image (no repo name)
-        release_tag: str
-            The target tag name for the release (no repo name)
+        release_tags: list
+            A list of target tag names for the release (no repo name)
 
         """
         if not isinstance(source_tag, str) or ':' in source_tag:
             raise ValueError(f'source_tag: {source_tag} is expected to be a str with no repo')
-        if not isinstance(release_tag, str) or ':' in release_tag:
-            raise ValueError(f'release_tag: {release_tag} is expected to be a str with no repo')
+        if not isinstance(release_tags, list):
+            raise ValueError(f'release_tags: {release_tags} is not a list')
+        for release_tag in release_tags:
+            if not isinstance(release_tag, str) or ':' in release_tag:
+                raise ValueError(f'release_tag: {release_tag} is expected to be a str with no repo')
         # Loop through the images
         for image in IMAGE_ORDER:
             sourcetag = f'ghcr.io/{repo}/{image}:{source_tag}'
-            releasetag = f'ghcr.io/{repo}/{image}:{release_tag}'
             # pull
             command = f'docker pull {sourcetag}'
             self.out(f"Pulling {sourcetag} ...")
             self.run(command, timeout=1000)
-            # tag
-            command = f'docker tag {sourcetag} {releasetag}'
-            self.out(f"Tagging {sourcetag} with {releasetag} ...")
-            self.run(command, timeout=1000)
-            # pull
-            command = f'docker push {releasetag}'
-            self.out(f"Pushing {releasetag} ...")
-            self.run(command, timeout=1000)
+            for release_tag in release_tags:
+                releasetag = f'ghcr.io/{repo}/{image}:{release_tag}'
+                # tag
+                command = f'docker tag {sourcetag} {releasetag}'
+                self.out(f"Tagging {sourcetag} with {releasetag} ...")
+                self.run(command, timeout=1000)
+                # pull
+                command = f'docker push {releasetag}'
+                self.out(f"Pushing {releasetag} ...")
+                self.run(command, timeout=1000)
 
     def remove_lockfiles(self, image):
         """Remove conda lock files from image
@@ -255,7 +259,7 @@ if __name__ == '__main__':
         help='After building, push to container registry',
         default=False)
     
-    ap.add_argument('--release', nargs=1,
+    ap.add_argument('--release', nargs='*',
         help='Release using the given tag')
     
     ap.add_argument('--no-build', action='store_true',
@@ -355,5 +359,4 @@ if __name__ == '__main__':
             builder.push(full_tag)
         
     if release is not None:
-        release = release[0]
         builder.release(repo, tag, release)

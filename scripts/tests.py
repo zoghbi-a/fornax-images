@@ -104,17 +104,21 @@ class TestBuilder(unittest.TestCase):
         self.assertEqual(cmd, output.split('::')[-1].strip())
         self.logger.handlers.clear()
     
-    def test_build__release_wrong_tag(self):
+    def test_build__release__tag_not_list(self):
         with self.assertRaises(ValueError):
             self.builder_dry.release('repo', 'in:tag', 'out')
+
+    def test_build__release_wrong_tag(self):
         with self.assertRaises(ValueError):
-            self.builder_dry.release('repo', 'in', 'out:tag')
+            self.builder_dry.release('repo', 'in:tag', ['out'])
+        with self.assertRaises(ValueError):
+            self.builder_dry.release('repo', 'in', ['out:tag'])
         self.logger.handlers.clear()
     
     def test_build__release(self):
         with patch('sys.stderr', new=StringIO()) as mock_out:
             logging.basicConfig(level=logging.DEBUG)
-            self.builder_dry.release(f'{self.repo}', f'{self.tag}', f'{self.tag}-out')
+            self.builder_dry.release(f'{self.repo}', f'{self.tag}', [f'{self.tag}-out'])
             output = mock_out.getvalue().strip()
         cmd = (f'docker push {self.repo}:{self.tag}')
         self.assertTrue(f'docker pull ghcr.io/{self.repo}/base_image:{self.tag}' in output)
