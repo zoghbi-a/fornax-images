@@ -1,0 +1,65 @@
+name: Build and push images as needed
+
+on:
+  push:
+    branches-ignore: ['releases/**']
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+
+  build-and-push-images:
+
+    runs-on: ubuntu-latest
+
+    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in
+    # this job.
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Debug Event Payload
+        env:
+          EVENT_PAYLOAD: ${{ toJson(github.event) }}
+        run: echo "$EVENT_PAYLOAD"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Git branch name
+        id: git-branch-name
+        run: echo "${{ github.head_ref || github.ref_name }}"
+
+      - uses: tchupp/actions-detect-directory-changes@v1
+        id: directory-changes
+        with:
+          included-paths: ""
+          included-extensions: ""
+          if-these-paths-change-return-all-included-paths: ""
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        id: setup_python
+        with:
+          python-version: '3.12'
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push images
+        id: push
+        env:
+          DIR_CHANGES: ${{ steps.directory-changes.outputs.changed }}
+        run: |
+           echo "DIR_CHANGES: $DIR_CHANGES"
+           python scripts/build.py --debug --repository "${{ github.repository }}" \
+              --tag "${{ github.head_ref || github.ref_name }}" \
+              --push $DIR_CHANGES

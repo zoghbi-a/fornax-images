@@ -37,7 +37,7 @@ file will be used inside the Dockerfile to reproduce the exact build.
 Note that in order for the build to work in the cloud (e.g. gitlab runners on AWS), the image used in the `FROM` statement needs to be accessible (e.g. `FROM public.ecr.aws/f6e2z3b0/fornax-images:base_image-${IMAGE_TAG}`). So it should be pushed to the ECR first. For example, the base image needs
 to be build first and pushed to the ECR before it can be used in the `FROM` statement of the `tractor` images.
 
-# The image
+# The images
 - `base_image`: is the base image that all other images should start from. It contains jupyter and the basic tools needed for deployment in the fornax project.
 
 - `tractor`: Main Astro image that was used for the demo. It contains tractor and other general useful tools.
